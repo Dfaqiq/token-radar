@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launch Radar — pre-token protocols ranked by implied value</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>LAUNCH RADAR</h1>
+    <p class="sub">Every protocol with no token yet, ranked by what its launch would be worth — priced from the tokens that already trade.</p>
+  </div>
+  <div class="asof" id="asof"></div>
+</header>
+<section class="stats" id="stats"></section>
+<section class="method" id="method">
+  <h2>How the value is priced — a note to the judge</h2>
+  <div id="methodBody"></div>
+</section>
+<section class="controls">
+  <input id="q" type="search" placeholder="Search name or slug…" aria-label="Search">
+  <select id="cat" aria-label="Category"><option value="">All categories</option></select>
+  <label class="chk"><input id="wl" type="checkbox"> Watchlist only</label>
+  <label class="chk">Min TVL <select id="minTvl"><option value="0">any</option><option value="50000000">$50M</option><option value="100000000">$100M</option><option value="500000000">$500M</option></select></label>
+  <span class="count" id="count"></span>
+</section>
+<main>
+  <table id="board">
+    <thead><tr>
+      <th data-k="rank">#</th><th data-k="name">Protocol</th><th data-k="category">Category</th>
+      <th data-k="chains">Chains</th><th data-k="tvl">TVL</th><th data-k="change7d">7d</th>
+      <th data-k="ageDays">Age</th><th data-k="value">Implied value</th><th data-k="multiple">×TVL</th>
+      <th data-k="cost">Farm cost</th><th data-k="vpd">Value/$</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+<section class="detail" id="detail" hidden></section>
+<section class="comps">
+  <h2>Comparables — the traded tokens the model is fitted on</h2>
+  <p class="fine">Every protocol in this snapshot that already trades. The log-log fit runs on these <span id="compN"></span> tokens; the board never ranks them.</p>
+  <table id="compTable">
+    <thead><tr><th>Protocol</th><th>Category</th><th>TVL</th><th>Market cap</th><th>×TVL</th></tr></thead>
+    <tbody id="compRows"></tbody>
+  </table>
+</section>
+<footer class="foot">
+  <p>Launch Radar reads one sealed snapshot (DefiLlama, <span id="footAsOf"></span>) and nothing else. Implied values are model estimates from that snapshot, not price predictions. Farm costs are estimates on the cheapest chain the protocol runs on; gas and fees move. No funds, no wallet, no network calls.</p>
+</footer>
+<script src="data.js"></script>
+<script src="plans.js"></script>
+<script src="zcomps.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
