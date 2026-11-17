@@ -29,12 +29,14 @@ const rows = board.rows;
 const boardJson = {
   as_of: asOf,
   model: {
-    kind: "quadratic size curve (log-log OLS with a squared term) on traded comparables, with bounded growth/age tilts",
+    kind: "hybrid: quadratic size curve + 20-nearest local median, averaged in log space, on traded comparables, with bounded growth/age tilts",
     intercept: board.meta.fit.intercept,
     slope: board.meta.fit.slope,
     quad: board.meta.fit.quad,
+    knn_k: 20,
     comparables: board.meta.fit.n,
-    oos_median_abs_log_error: board.meta.oos.medErrTilt,
+    oos_median_abs_log_error: board.meta.oos.medErrHybridTilt,
+    oos_median_abs_log_error_curve: board.meta.oos.medErrTilt,
   },
   rows: rows.map((r) => ({
     slug: r.slug,
@@ -127,7 +129,7 @@ console.log(`rows: ${rows.length}`);
 console.log(`top value: $${rows[0]!.value.toLocaleString("en-US")} (${rows[0]!.slug})`);
 console.log(`last value: $${rows[rows.length - 1]!.value.toLocaleString("en-US")}`);
 console.log(`fit: intercept ${board.meta.fit.intercept.toFixed(3)} slope ${board.meta.fit.slope.toFixed(3)} n=${board.meta.fit.n}`);
-console.log(`oos median abs log error: ${board.meta.oos.medErrTilt.toFixed(3)} (naive ${board.meta.oos.medErrNaive.toFixed(3)})`);
+console.log(`oos hybrid median abs log error: ${board.meta.oos.medErrHybridTilt.toFixed(3)} (curve ${board.meta.oos.medErrTilt.toFixed(3)}, linear ${board.meta.oos.medErrLinear.toFixed(3)}, naive ${board.meta.oos.medErrNaive.toFixed(3)})`);
 console.log(`bootstrap fitted value at median TVL: 5-95% x${board.meta.boot.lo.toFixed(2)}-x${board.meta.boot.hi.toFixed(2)} of $${Math.round(board.meta.boot.medianValue).toLocaleString("en-US")}`);
 console.log(`output bytes: ${sizes(outDir)}`);
 console.log(`dossier bytes: ${dossier.length}`);

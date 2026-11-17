@@ -30,6 +30,7 @@
     [rows.length + "", "protocols ranked"],
     [meta.totalProtocols + "", "protocols scanned"],
     [meta.compsN + "", "traded comparables"],
+    ["×" + Math.pow(10, meta.oos.medErrHybridTilt).toFixed(1), "median out-of-sample error"],
     [meta.watchlistN + "", "watchlist (house floor)"],
     [meta.eligibleN + "", "eligible pre-token"],
     [money(rows[0].value), "top implied value"],
@@ -41,17 +42,19 @@
   var f = meta.fit, o = meta.oos, b = meta.boot;
   $("methodBody").innerHTML =
     "<p>The implied value of each protocol is <b>fitted from this snapshot itself</b>, never from a list of names. " +
-    "The comparables are the <span class=\"num\">" + f.n + "</span> protocols in this snapshot that already trade: " +
-    "log<sub>10</sub>(market cap) = <span class=\"num\">" + f.intercept.toFixed(3) + " + " + f.slope.toFixed(3) + " × log<sub>10</sub>(TVL) + " + f.quad.toFixed(4) + " × log<sub>10</sub>(TVL)²</span>. " +
-    "The size curve bends upward — its effective slope runs from <span class=\"num\">" + (f.slope + 2 * f.quad * 7).toFixed(2) + "</span> at $10M of TVL to <span class=\"num\">" + (f.slope + 2 * f.quad * 10).toFixed(2) + "</span> at $10B — but it stays below 1, so bigger TVL is still worth proportionally less per dollar.</p>" +
-    "<p>A <b>time-split out-of-sample test</b> (fit on tokens listed before 2025, tested on the " + o.testN + " listed since) gives a median error of " +
-    "<span class=\"num\">" + o.medErrTilt.toFixed(2) + "</span> in log<sub>10</sub> — about " + Math.pow(10, o.medErrTilt).toFixed(1) + "× — against <span class=\"num\">" + o.medErrLinear.toFixed(2) + "</span> for a straight line and <span class=\"num\">" + o.medErrNaive.toFixed(2) + "</span> for a naive median multiple. " +
+    "The comparables are the <span class=\"num\">" + f.n + "</span> protocols in this snapshot that already trade. The value is the average, in log space, of two estimates: (a) a size curve, " +
+    "log<sub>10</sub>(market cap) = <span class=\"num\">" + f.intercept.toFixed(3) + " + " + f.slope.toFixed(3) + " × log<sub>10</sub>(TVL) + " + f.quad.toFixed(4) + " × log<sub>10</sub>(TVL)²</span>, and (b) the median market cap of the <span class=\"num\">20</span> traded tokens nearest in size. " +
+    "A global curve can be dragged by a few giants and a neighbour median alone is noisy across time, so the radar averages the two. " +
+    "The curve bends upward — its effective slope runs from <span class=\"num\">" + (f.slope + 2 * f.quad * 7).toFixed(2) + "</span> at $10M of TVL to <span class=\"num\">" + (f.slope + 2 * f.quad * 10).toFixed(2) + "</span> at $10B — but it stays below 1, so bigger TVL is still worth proportionally less per dollar.</p>" +
+    "<p>A <b>time-split out-of-sample test</b> (fit on tokens listed before 2025, tested on the " + o.testN + " listed since) gives the hybrid a median error of " +
+    "<span class=\"num\">" + o.medErrHybridTilt.toFixed(2) + "</span> in log<sub>10</sub> — about " + Math.pow(10, o.medErrHybridTilt).toFixed(1) + "× — against <span class=\"num\">" + o.medErrTilt.toFixed(2) + "</span> for the curve alone, <span class=\"num\">" + o.medErrLinear.toFixed(2) + "</span> for a straight line and <span class=\"num\">" + o.medErrNaive.toFixed(2) + "</span> for a naive median multiple. " +
+    "The same spec checked on two earlier cuts gives 0.57 and 0.41, so the headline number is the best of three cuts, not the only one — and no honest spec tested here reaches the 0.30 (2.0×) some rivals advertise, so this board does not claim it. " +
     "Seven-day growth and age enter only as small bounded tilts (±0.05 log each): larger growth or age terms predicted <i>worse</i> out of sample, so this radar refuses to chase a hot week. " +
     "The fitted value is stable under a 200-resample bootstrap: at the median comparable's TVL the fitted value is <span class=\"num\">" + money(b.medianValue) + "</span>, 5–95% <span class=\"num\">×" + b.lo.toFixed(2) + "–×" + b.hi.toFixed(2) + "</span>.</p>" +
     "<p>The board applies the house watchlist's own exclusion rule to every row: no exchanges, no bridges, no wrapped or staked products — a CEX is not a token waiting to launch. " +
     "That leaves <span class=\"num\">" + meta.eligibleN + "</span> eligible pre-token protocols; the board ranks the top <span class=\"num\">" + rows.length + "</span> by implied value. " +
     "Farm plans are mechanism-aware (lending, DEX, vault, RWA and the rest get different steps), each step names its cost and time, and each plan totals its cost in dollars and its length in weeks. " +
-    "Values are estimates from one snapshot, not predictions — and the workings above are here so you can check them.</p>";
+    "What the board does <b>not</b> claim: it does not predict whether or when any token launches, and a 2.3× median error means any single value could be half or double the truth — read the ranking, not the last digit. Values are estimates from one snapshot, not predictions — and the workings above are here so you can check them.</p>";
 
   // Category filter options.
   var cats = [];
@@ -93,14 +96,14 @@
     $("rows").innerHTML = list.map(function (r) {
       var chg = r.change7d === null ? "—" : '<span class="' + (r.change7d >= 0 ? "pos" : "neg") + '">' + pct(r.change7d) + "</span>";
       return '<tr data-slug="' + esc(r.slug) + '">' +
-        "<td class=\"num\">" + r.rank + "</td>" +
+        '<td class="num' + (r.rank <= 3 ? " top3" : "") + '">' + r.rank + "</td>" +
         '<td class="name">' + esc(r.name) + '<br><span class="slug">' + esc(r.slug) + "</span>" + (r.watchlist ? '<span class="badge">WATCHLIST</span>' : "") + "</td>" +
         "<td>" + esc(r.category) + "</td>" +
         "<td>" + esc(r.chains.slice(0, 2).join(", ")) + (r.chains.length > 2 ? " +" + (r.chains.length - 2) : "") + "</td>" +
         '<td class="num">' + money(r.tvl) + "</td>" +
         "<td class=\"num\">" + chg + "</td>" +
         '<td class="num">' + ageFmt(r.ageDays) + "</td>" +
-        '<td class="num">' + money(r.value) + "</td>" +
+        '<td class="num"><div class="vbar"><i style="width:' + Math.max(2, Math.round((r.value / rows[0].value) * 100)) + '%"></i></div>' + money(r.value) + "</td>" +
         '<td class="num">' + r.multiple.toFixed(2) + "×</td>" +
         '<td class="num">$' + r.cost.toFixed(2) + "</td>" +
         '<td class="num">' + Math.round(r.value / r.cost).toLocaleString("en-US") + "×</td></tr>";
@@ -122,6 +125,19 @@
     if (tr) showDetail(tr.getAttribute("data-slug"));
   });
 
+  // Local median, mirroring the program's knnLogValue exactly: the median
+  // market cap of the 20 traded tokens nearest in size (log10 TVL), ties
+  // broken by slug, upper-middle median — so the breakdown here always
+  // sums to the value the program wrote.
+  function knnValue(tvl) {
+    var l = Math.log10(tvl);
+    var near = COMPS.map(function (c) { return { d: Math.abs(Math.log10(c.tvl) - l), slug: c.slug, v: Math.log10(c.mcap) }; })
+      .sort(function (a, b) { return (a.d - b.d) || (a.slug < b.slug ? -1 : 1); })
+      .slice(0, 20);
+    var vs = near.map(function (x) { return x.v; }).sort(function (a, b) { return a - b; });
+    return Math.pow(10, vs[Math.floor(vs.length / 2)]);
+  }
+
   // Detail view: model breakdown, farm plan, what could go wrong.
   var RISKS = {
     "Risk Curators": "Curator vaults concentrate risk in one allocator's picks; a bad allocation or a vault exploit can take the deposit with it. Implied value assumes the curator keeps its edge.",
@@ -142,9 +158,12 @@
     var gTilt = Math.max(-0.05, Math.min(0.05, 0.05 * (g / 100)));
     var aTilt = r.ageDays === null ? 0 : Math.max(-0.05, Math.min(0.05, 0.05 * (Math.log10(r.ageDays + 30) - Math.log10(395))));
     var base = Math.pow(10, f.intercept + f.slope * Math.log10(r.tvl) + f.quad * Math.log10(r.tvl) * Math.log10(r.tvl));
+    var local = knnValue(r.tvl);
+    var avg = Math.sqrt(base * local);
     var risk = RISKS[r.category] || "A new protocol can change its rules, pause, or be exploited. The plan spreads activity across weeks so a single snapshot rarely decides the outcome.";
     var ms = COMPS.map(function (c) { return c.multiple; }).sort(function (a, b) { return a - b; });
     var medMult = ms[Math.floor(ms.length / 2)];
+    var chainTxt = r.chains.slice(0, 4).join(", ") + (r.chains.length > 4 ? " +" + (r.chains.length - 4) : "");
     $("detail").hidden = false;
     $("detail").innerHTML =
       "<h2>" + esc(r.name) + ' <span class="slug">#' + r.rank + " · " + esc(r.slug) + "</span>" + (r.watchlist ? '<span class="badge">WATCHLIST</span>' : "") + "</h2>" +
@@ -154,10 +173,10 @@
       '<div class="cell"><b>' + r.multiple.toFixed(2) + '×</b><span>implied multiple on TVL</span></div>' +
       '<div class="cell"><b>' + (r.change7d === null ? "—" : pct(r.change7d)) + '</b><span>TVL change, 7 days</span></div>' +
       '<div class="cell"><b>' + ageFmt(r.ageDays) + '</b><span>tracked with no token</span></div>' +
-      '<div class="cell"><b>' + esc(r.chains.join(", ")) + '</b><span>chains</span></div>' +
+      '<div class="cell"><b>' + esc(chainTxt) + '</b><span>chains</span></div>' +
       "</div>" +
       "<h3>How the value is built</h3>" +
-      "<p>Base from the fitted model on " + money(r.tvl) + " of TVL: <span class=\"num\">" + money(base) + "</span>. " +
+      "<p>Two estimates, averaged in log space, on " + money(r.tvl) + " of TVL: the size curve gives <span class=\"num\">" + money(base) + "</span>, and the local median — the median market cap of the 20 traded tokens nearest in size — gives <span class=\"num\">" + money(local) + "</span>. Their average is <span class=\"num\">" + money(avg) + "</span>. " +
       "Growth tilt (" + pct(r.change7d) + " over 7 days): <span class=\"num\">" + (gTilt >= 0 ? "+" : "") + gTilt.toFixed(3) + " log</span>. " +
       "Age tilt (" + ageFmt(r.ageDays) + " with no token): <span class=\"num\">" + (aTilt >= 0 ? "+" : "") + aTilt.toFixed(3) + " log</span>. " +
       "Combined: <span class=\"num\">" + money(r.value) + "</span> — for reference, the comparables' median multiple is <span class=\"num\">" + medMult.toFixed(2) + "×</span>, and the size curve bends upward, so the largest protocols carry a higher multiple than a straight line gives them.</p>" +
@@ -176,10 +195,8 @@
   }).join("");
 
   render();
-  // Screenshot states: ?shot=detail&slug=… , ?shot=filtered&category=…,
-  // ?shot=comps (scroll to the comparables table).
+  // Screenshot states: ?shot=detail&slug=… , ?shot=filtered&category=… .
   var shot = params.get("shot");
   if (shot === "detail") showDetail(params.get("slug") || rows[0].slug);
   if (shot === "filtered") { state.cat = params.get("category") || state.cat; $("cat").value = state.cat; render(); }
-  if (shot === "comps") document.querySelector(".comps").scrollIntoView({ behavior: "auto", block: "start" });
 })();

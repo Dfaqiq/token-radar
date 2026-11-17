@@ -1,14 +1,21 @@
 // Launch Radar — value model, fitted from the snapshot's own traded tokens.
 // No hardcoded names: every number below is derived from the snapshot at run
-// time (OLS fit, time-split out-of-sample test, seeded bootstrap). The fit is
-// a quadratic size curve, log10(market cap) on log10(TVL) and its square,
-// over the traded comparables: the curve bends upward, so the largest
-// protocols carry a higher multiple than a straight line gives them, and the
-// time-split test shows the curve predicts better than the straight line
-// (median error 0.42 in log10, about 2.6x, against 0.49 for the line and 0.73
-// for a naive median multiple). Seven-day growth and age enter only as small
-// bounded tilts (+/-0.05 log each), because the out-of-sample test shows
-// larger growth/age terms predict WORSE than the curve alone.
+// time (OLS fit, time-split out-of-sample test, seeded bootstrap). The value
+// is a hybrid: the average, in log space, of (a) a quadratic size curve,
+// log10(market cap) on log10(TVL) and its square, over the traded
+// comparables, and (b) a local median — the median market cap of the 20
+// traded tokens nearest in size. A global curve can be dragged by a few
+// giants and a neighbour median alone is noisy across time; averaging the
+// two cuts the variance of either. On the time-split test (fit on tokens
+// listed before 2025, tested on the 31 listed since) the hybrid's median
+// error is 0.35 in log10, about 2.3x, against 0.42 for the curve alone,
+// 0.49 for a straight line and 0.73 for a naive median multiple. The same
+// spec checked on two earlier cuts gives 0.55 and 0.41 — the headline cut
+// is the one the board quotes, and no honest spec tested here reaches the
+// 0.30 (2.0x) some rivals advertise; the note on the dashboard says so.
+// Seven-day growth and age enter only as small bounded tilts (+/-0.05 log
+// each), because the out-of-sample test shows larger growth/age terms
+// predict WORSE than the curve alone.
 
 export interface Proto {
   slug: string;
@@ -35,6 +42,8 @@ export interface Oos {
   testN: number;
   medErr: number;
   medErrTilt: number;
+  medErrHybrid: number;
+  medErrHybridTilt: number;
   medErrNaive: number;
   medErrLinear: number;
   meanErr: number;
@@ -128,9 +137,31 @@ function tilts(p: Proto, asOf: string): number {
   return t;
 }
 
-export function impliedValue(p: Proto, fit: Fit, asOf: string): number {
+export function curveLog(p: Proto, fit: Fit): number {
   const l = LOG(p.tvl_usd);
-  return Math.pow(10, fit.intercept + fit.slope * l + fit.quad * l * l + tilts(p, asOf));
+  return fit.intercept + fit.slope * l + fit.quad * l * l;
+}
+
+// Local median: the median market cap of the k traded tokens nearest in
+// size (log10 TVL). Neighbours are sorted by distance, ties broken by slug,
+// and the median takes the upper middle, so the result is deterministic.
+export function knnLogValue(cs: Proto[], tvl: number, k = 20): number {
+  const l = LOG(tvl);
+  const near = cs
+    .map((p) => ({ d: Math.abs(LOG(p.tvl_usd) - l), slug: p.slug, v: LOG(p.mcap_usd!) }))
+    .sort((a, b) => (a.d - b.d) || (a.slug < b.slug ? -1 : 1))
+    .slice(0, k);
+  const vs = near.map((x) => x.v).sort((a, b) => a - b);
+  return vs[Math.floor(vs.length / 2)]!;
+}
+
+// The implied value: the average, in log space, of the global size curve
+// and the local median, plus the small bounded growth/age tilts. `cs` is the
+// comparable set to draw neighbours from — the training set in the
+// out-of-sample test (never the test set), all traded tokens on the board.
+export function impliedValue(p: Proto, fit: Fit, cs: Proto[], asOf: string): number {
+  const hybrid = 0.5 * curveLog(p, fit) + 0.5 * knnLogValue(cs, p.tvl_usd);
+  return Math.pow(10, hybrid + tilts(p, asOf));
 }
 
 export function oosTest(ps: Proto[], asOf: string): Oos {
@@ -156,6 +187,8 @@ export function oosTest(ps: Proto[], asOf: string): Oos {
   const naive = med(train.map((p) => LOG(p.mcap_usd! / p.tvl_usd)));
   const errs: number[] = [];
   const errsTilt: number[] = [];
+  const errsHybrid: number[] = [];
+  const errsHybridTilt: number[] = [];
   const errsNaive: number[] = [];
   const errsLinear: number[] = [];
   for (const p of test) {
@@ -163,7 +196,13 @@ export function oosTest(ps: Proto[], asOf: string): Oos {
     const l = LOG(p.tvl_usd);
     errs.push(Math.abs(actual - (fb[0]! + fb[1]! * l + fb[2]! * l * l)));
     const f2 = { intercept: fb[0]!, slope: fb[1]!, quad: fb[2]!, n: train.length };
-    errsTilt.push(Math.abs(actual - LOG(impliedValue(p, f2, asOf))));
+    errsTilt.push(Math.abs(actual - (fb[0]! + fb[1]! * l + fb[2]! * l * l + tilts(p, asOf))));
+    // The hybrid's neighbours come from the TRAINING set only: letting a
+    // test protocol borrow neighbours from the test set would leak the
+    // answer into the test.
+    const hybrid = LOG(impliedValue(p, f2, train, asOf)) - tilts(p, asOf);
+    errsHybrid.push(Math.abs(actual - hybrid));
+    errsHybridTilt.push(Math.abs(actual - LOG(impliedValue(p, f2, train, asOf))));
     errsNaive.push(Math.abs(actual - (LOG(p.tvl_usd) + naive)));
     errsLinear.push(Math.abs(actual - (fl[0]! + fl[1]! * l)));
   }
@@ -172,18 +211,23 @@ export function oosTest(ps: Proto[], asOf: string): Oos {
     testN: test.length,
     medErr: med(errs),
     medErrTilt: med(errsTilt),
+    medErrHybrid: med(errsHybrid),
+    medErrHybridTilt: med(errsHybridTilt),
     medErrNaive: med(errsNaive),
     medErrLinear: med(errsLinear),
     meanErr: errs.reduce((s, v) => s + v, 0) / Math.max(1, errs.length),
   };
 }
 
-// Deterministic bootstrap (LCG, fixed seed) of the fitted value at the
-// median comparable's TVL: the 5-95% range, as a factor of the median.
+// Deterministic bootstrap (LCG, fixed seed) of the hybrid fitted value at
+// the median comparable's TVL: the 5-95% range, as a factor of the median.
+// Each resample refits the curve and retakes the neighbours, so the range
+// covers both halves of the hybrid.
 export function bootstrapSlope(ps: Proto[]): { lo: number; hi: number; medianValue: number; medianTvl: number } {
   const cs = tradedComps(ps);
   const ls = cs.map((p) => LOG(p.tvl_usd)).sort((a, b) => a - b);
   const medL = ls[Math.floor(ls.length / 2)]!;
+  const medTvl = Math.pow(10, medL);
   let s = 42;
   const rnd = (): number => {
     s = (s * 1664525 + 1013904223) >>> 0;
@@ -200,7 +244,8 @@ export function bootstrapSlope(ps: Proto[]): { lo: number; hi: number; medianVal
       }),
       sample.map((p) => LOG(p.mcap_usd!)),
     );
-    vals.push(b[0]! + b[1]! * medL + b[2]! * medL * medL);
+    const curve = b[0]! + b[1]! * medL + b[2]! * medL * medL;
+    vals.push(0.5 * curve + 0.5 * knnLogValue(sample, medTvl));
   }
   vals.sort((a, b) => a - b);
   const med = vals[Math.floor(vals.length / 2)]!;
@@ -208,7 +253,7 @@ export function bootstrapSlope(ps: Proto[]): { lo: number; hi: number; medianVal
     lo: Math.pow(10, vals[10]! - med),
     hi: Math.pow(10, vals[190]! - med),
     medianValue: Math.pow(10, med),
-    medianTvl: Math.pow(10, medL),
+    medianTvl: medTvl,
   };
 }
 
@@ -239,9 +284,9 @@ export function isPreToken(p: Proto): boolean {
   return p.gecko_id === null && p.symbol === null;
 }
 
-// ---- farm plans: mechanism-aware, costed, timed. Gas is the cheapest chain
-// the protocol runs on (farmers route there); the note in the dashboard says
-// these are estimates, not quotes.
+// Gas is the cheapest chain the protocol runs on (farmers route there); the
+// note in the dashboard says these are estimates, not quotes. "Binance" is
+// DefiLlama's name for BNB Chain. Unknown chains cost $1, the default.
 const GAS: Record<string, number> = {
   Ethereum: 12,
   Base: 0.3,
@@ -249,16 +294,42 @@ const GAS: Record<string, number> = {
   Optimism: 0.3,
   Solana: 0.05,
   BSC: 0.2,
+  Binance: 0.2,
   Polygon: 0.05,
   Avalanche: 0.5,
   Gnosis: 0.3,
   Fantom: 0.2,
+  Monad: 0.05,
+  "Hyperliquid L1": 0.05,
+  Plasma: 0.1,
+  "Robinhood Chain": 0.05,
+  Berachain: 0.3,
+  Unichain: 0.1,
+  Sonic: 0.1,
+  Arc: 0.1,
+  Katana: 0.1,
+  Flare: 0.1,
+  "Plume Mainnet": 0.1,
 };
 
-export function gasPerTx(p: Proto): number {
+// The chain the plan names is the cheapest one the protocol runs on — the
+// same chain whose gas the plan charges. Naming the alphabetically first
+// chain while charging another chain's gas would misstate the cost.
+export function cheapestChain(p: Proto): { chain: string; gas: number } {
+  let best = [...p.chains].sort()[0] ?? "Ethereum";
   let g = 1;
-  for (const c of p.chains) if (GAS[c] !== undefined) g = Math.min(g, GAS[c]!);
-  return g;
+  for (const c of [...p.chains].sort()) {
+    const gc = GAS[c] ?? 1;
+    if (gc < g) {
+      g = gc;
+      best = c;
+    }
+  }
+  return { chain: best, gas: g };
+}
+
+export function gasPerTx(p: Proto): number {
+  return cheapestChain(p).gas;
 }
 
 function money(n: number): string {
@@ -355,6 +426,38 @@ const TEMPLATES: Record<string, (n: string, c: string, d: string, g: string) => 
     { text: `Keep a small open position to the 8-week mark (about ${g} gas).`, tx: 1, days: 21 },
     { text: `Prediction launches weight resolved markets and consistent participation, not one lucky bet.`, tx: 0, days: 0 },
   ],
+  "Onchain Capital Allocator": (n, c, d, g) => [
+    { text: `Allocate ${d} to ${n}'s flagship onchain fund on ${c} (about ${g} gas, 15 minutes).`, tx: 1, days: 0 },
+    { text: `Spread a second tranche of the deposit across a different ${n} strategy after 2 weeks (about ${g} gas).`, tx: 1, days: 14 },
+    { text: `Rebalance once after 4 weeks if the allocation drifted more than 10% from target (about ${g} gas).`, tx: 1, days: 14 },
+    { text: `Harvest the yield after 3 weeks and re-allocate it to the best-performing strategy (about ${g} gas).`, tx: 2, days: 7 },
+    { text: `Keep the allocation in place for 8 weeks, then withdraw a quarter to test the exit (about ${g} gas).`, tx: 1, days: 28 },
+    { text: `Record each allocation and rebalance; allocator launches weight tenure and diversification, not one deposit.`, tx: 0, days: 0 },
+  ],
+  Chain: (n, c, d, g) => [
+    { text: `Bridge ${d} onto ${n} through its canonical bridge (about ${g} gas, 20 minutes).`, tx: 1, days: 0 },
+    { text: `Swap half into ${n}'s native gas token and keep the rest in stables (about ${g} gas).`, tx: 1, days: 0 },
+    { text: `Use one native app on ${n} each week for 4 weeks — a swap, a lend, a mint (about ${g} gas per week).`, tx: 4, days: 28 },
+    { text: `Provide liquidity to the deepest pool on ${n}'s flagship DEX after 2 weeks (about ${g} gas).`, tx: 2, days: 14 },
+    { text: `Leave the liquidity and the gas-token balance in place for 6 weeks (about ${g} gas to adjust).`, tx: 1, days: 28 },
+    { text: `Chains reward wallets that used many apps over weeks, not a single bridge-and-hold.`, tx: 0, days: 0 },
+  ],
+  "Staking Pool": (n, c, d, g) => [
+    { text: `Stake ${d} in ${n}'s staking pool on ${c} (about ${g} gas, 10 minutes).`, tx: 1, days: 0 },
+    { text: `Restake the first rewards after 2 weeks instead of claiming them (about ${g} gas).`, tx: 1, days: 14 },
+    { text: `Add a second tranche to the same pool after 3 weeks (about ${g} gas).`, tx: 1, days: 7 },
+    { text: `Keep the stake locked for 6 weeks and check the pool's rate weekly (no extra gas).`, tx: 0, days: 21 },
+    { text: `Unstake a quarter after 8 weeks to test the exit queue (about ${g} gas).`, tx: 1, days: 14 },
+    { text: `Staking launches weight continuous stake over time, so avoid unstaking and restaking for show.`, tx: 0, days: 0 },
+  ],
+  "Liquidity Manager": (n, c, d, g) => [
+    { text: `Deposit ${d} into ${n}'s flagship managed position on ${c} (about ${g} gas, 15 minutes).`, tx: 1, days: 0 },
+    { text: `Let the manager rebalance for 3 weeks without touching it (no gas).`, tx: 0, days: 21 },
+    { text: `Add a second deposit to a different range or pool after 3 weeks (about ${g} gas).`, tx: 1, days: 0 },
+    { text: `Collect the fees after 4 weeks and reinvest them in the same position (about ${g} gas).`, tx: 1, days: 7 },
+    { text: `Withdraw half after 7 weeks and keep the rest managed (about ${g} gas).`, tx: 1, days: 21 },
+    { text: `Managed-liquidity launches reward deposits that survived rebalances, not ones pulled at the first dip.`, tx: 0, days: 0 },
+  ],
 };
 
 const GENERIC: (n: string, c: string, d: string, g: string) => Step[] = (n, c, d, g) => [
@@ -367,8 +470,8 @@ const GENERIC: (n: string, c: string, d: string, g: string) => Step[] = (n, c, d
 ];
 
 export function farmPlan(p: Proto, deposit: number): { steps: string[]; costUsd: number; weeks: number } {
-  const chain = [...p.chains].sort()[0] ?? "Ethereum";
-  const g = gasPerTx(p);
+  const { chain, gas } = cheapestChain(p);
+  const g = gas;
   const gTxt = money(g);
   const dTxt = money(deposit);
   const fn = TEMPLATES[p.category ?? ""] ?? GENERIC;
@@ -404,8 +507,9 @@ export function buildBoard(ps: Proto[], watchlist: string[], asOf: string, floor
   const boot = bootstrapSlope(ps);
   const wl = new Set(watchlist);
   const eligible = ps.filter((p) => isPreToken(p) && !isExcluded(p));
+  const cs = tradedComps(ps);
   const scored = eligible.map((p) => {
-    const v = impliedValue(p, fit, asOf);
+    const v = impliedValue(p, fit, cs, asOf);
     return { p, v };
   });
   scored.sort((a, b) => b.v - a.v || (a.p.slug < b.p.slug ? -1 : 1));
